@@ -943,6 +943,7 @@ static int texpacker_save_atlas_info( texpacker_in_data_t * const _data, texpack
         wcstombs( mbstr_texture_path, texture->path, FILENAME_MAX );
 
         json_object_set_new( j_texture, "path", json_string( mbstr_texture_path ) );
+        json_object_set_new( j_texture, "atlas", json_integer( texture->atlas->index ) );
 
         float atlas_width_inv = 1.f / (float)texture->atlas->width;
         float atlas_height_inv = 1.f / (float)texture->atlas->height;
