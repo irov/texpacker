@@ -1,0 +1,107 @@
+CMAKE_MINIMUM_REQUIRED( VERSION 3.0 )
+
+set(TEXPACKER_DOWNLOADS_PATH "${TEXPACKER_THIRDPARTY_DIR}" CACHE STRING "TEXPACKER_DOWNLOADS_PATH")
+
+if(TEXPACKER_DOWNLOADS_SILENT)
+    SET(TEXPACKER_GIT_PROGRESS FALSE)
+    SET(TEXPACKER_DOWNLOAD_NO_PROGRESS 1)
+    SET(TEXPACKER_FILE_DOWNLOAD_SHOW_PROGRESS FALSE)
+else()
+    SET(TEXPACKER_GIT_PROGRESS TRUE)
+    SET(TEXPACKER_DOWNLOAD_NO_PROGRESS 0)
+    SET(TEXPACKER_FILE_DOWNLOAD_SHOW_PROGRESS TRUE)
+endif()
+
+MESSAGE("TEXPACKER_DOWNLOADS_PATH: " ${TEXPACKER_DOWNLOADS_PATH})
+MESSAGE("TEXPACKER_DOWNLOADS_SILENT: " ${TEXPACKER_DOWNLOADS_SILENT})
+
+include(ExternalProject)
+
+find_package(Git REQUIRED)
+
+MESSAGE("GIT_EXECUTABLE: ${GIT_EXECUTABLE}")
+MESSAGE("GIT_VERSION_STRING: ${GIT_VERSION_STRING}")
+
+macro(DOWNLOAD_FILE NAME URL FILE)
+    MESSAGE("Download ${NAME}: ${URL}")
+    if(NOT EXISTS ${TEXPACKER_DOWNLOADS_PATH}/${NAME}/${FILE})
+        if(TEXPACKER_FILE_DOWNLOAD_SHOW_PROGRESS)
+            file(DOWNLOAD ${URL} ${TEXPACKER_DOWNLOADS_PATH}/${NAME}/${FILE} SHOW_PROGRESS)
+        else()
+            file(DOWNLOAD ${URL} ${TEXPACKER_DOWNLOADS_PATH}/${NAME}/${FILE})
+        endif()
+    endif()
+endmacro()
+
+macro(DOWNLOAD_URL NAME URL)
+    MESSAGE("Download ${NAME}: ${URL}")
+    ExternalProject_Add(${NAME}_download PREFIX ${NAME}
+        SOURCE_DIR ${TEXPACKER_THIRDPARTY_DIR}/${NAME}
+        
+        URL ${URL}
+        DOWNLOAD_NO_PROGRESS ${TEXPACKER_DOWNLOAD_NO_PROGRESS}
+
+        CONFIGURE_COMMAND ""
+        BUILD_COMMAND ""
+        UPDATE_COMMAND ""
+        INSTALL_COMMAND ""
+    )
+    
+    add_library(${NAME} STATIC IMPORTED)
+endmacro()
+
+macro(DOWNLOAD_URL_HASH NAME URL HASH_ALGO HASH)
+    MESSAGE("Download ${NAME}: ${URL}")
+    ExternalProject_Add(${NAME}_download PREFIX ${NAME}
+        SOURCE_DIR ${TEXPACKER_THIRDPARTY_DIR}/${NAME}
+        
+        URL ${URL}
+        URL_HASH ${HASH_ALGO}=${HASH}
+        DOWNLOAD_NO_PROGRESS ${TEXPACKER_DOWNLOAD_NO_PROGRESS}
+
+        CONFIGURE_COMMAND ""
+        BUILD_COMMAND ""
+        UPDATE_COMMAND ""
+        INSTALL_COMMAND ""
+    )
+    
+    add_library(${NAME} STATIC IMPORTED)
+endmacro()
+
+macro(GIT_CLONE NAME REPOSITORY)
+    set(TAG ${ARGN})
+    
+    list(LENGTH TAG EXIST_TAG)
+    
+    if(${EXIST_TAG} GREATER 0)
+        MESSAGE("Git ${NAME}: ${REPOSITORY} [${TAG}]")
+        ExternalProject_Add( "${NAME}_${TAG}_download" PREFIX ${NAME}
+            SOURCE_DIR ${TEXPACKER_THIRDPARTY_DIR}/${NAME}
+            
+            GIT_REPOSITORY ${REPOSITORY}
+            GIT_TAG ${TAG}
+            GIT_PROGRESS ${TEXPACKER_GIT_PROGRESS}
+
+            CONFIGURE_COMMAND ""
+            BUILD_COMMAND ""
+            UPDATE_COMMAND ""
+            INSTALL_COMMAND ""
+        )
+    else()
+        MESSAGE("Git ${NAME}: ${REPOSITORY}")
+        
+        ExternalProject_Add(${NAME}_download PREFIX ${NAME}
+            SOURCE_DIR ${TEXPACKER_THIRDPARTY_DIR}/${NAME}
+            
+            GIT_REPOSITORY ${REPOSITORY}
+            GIT_PROGRESS ${TEXPACKER_GIT_PROGRESS}
+
+            CONFIGURE_COMMAND ""
+            BUILD_COMMAND ""
+            UPDATE_COMMAND ${GIT_EXECUTABLE} pull
+            INSTALL_COMMAND ""
+            )
+    endif()
+    
+    add_library(${NAME} STATIC IMPORTED)
+endmacro()
