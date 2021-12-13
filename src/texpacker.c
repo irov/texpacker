@@ -129,6 +129,7 @@ typedef struct texpacker_in_data_t
     uint32_t textures_count;
     texpacker_texture_t * textures;
 
+    uint32_t atlas_border;
     uint32_t atlas_max_width;
     uint32_t atlas_max_height;
     uint32_t atlas_channels;
@@ -147,6 +148,14 @@ static int texpacker_load_in_data( const void * _buffer, size_t _len, texpacker_
 
     if( j == NULL )
     {
+        printf( "json error:\nline: %d\ncolumn: %d\nposition: %d\nsource: %s\n text: %s\n"
+            , j_error.line
+            , j_error.column
+            , j_error.position
+            , j_error.source
+            , j_error.text
+        );
+
         return 1;
     }
 
@@ -187,6 +196,13 @@ static int texpacker_load_in_data( const void * _buffer, size_t _len, texpacker_
         return 1;
     }
 
+    json_t * j_atlas_border = json_object_get( j_atlas, "border" );
+
+    if( j_atlas_border == NULL )
+    {
+        return 1;
+    }    
+
     json_t * j_atlas_max_width = json_object_get( j_atlas, "max_width" );
 
     if( j_atlas_max_width == NULL )
@@ -208,6 +224,7 @@ static int texpacker_load_in_data( const void * _buffer, size_t _len, texpacker_
         return 1;
     }
 
+    _data->atlas_border = (uint32_t)json_integer_value( j_atlas_border );
     _data->atlas_max_width = (uint32_t)json_integer_value( j_atlas_max_width );
     _data->atlas_max_height = (uint32_t)json_integer_value( j_atlas_max_height );
     _data->atlas_channels = (uint32_t)json_integer_value( j_atlas_channels );
@@ -373,34 +390,43 @@ static texpacker_atlas_rect_t * texpacker_make_atlas_rect( uint32_t _x, uint32_t
     return r;
 }
 //////////////////////////////////////////////////////////////////////////
-static int texpacker_fill_atlas_rect( texpacker_atlas_rect_t * _r, int8_t _rotate, const texpacker_texture_t * _t )
+static int texpacker_fill_atlas_rect( uint32_t _border, texpacker_atlas_rect_t * _r, int8_t _rotate, const texpacker_texture_t * _t )
 {
     if( _r->state != 0x00000000 )
     {
         return 1;
     }
 
+    uint32_t tw = _t->width + _border * 2;
+    uint32_t th = _t->height + _border * 2;
+
     if( _rotate == 0 )
     {
-        _r->u = _t->width;
-        _r->v = _t->height;
+        _r->u = tw;
+        _r->v = th;
     }
     else
     {
-        _r->u = _t->height;
-        _r->v = _t->width;
+        _r->u = th;
+        _r->v = tw;
     }
 
     _r->state |= 0x00000001;
     _r->rotate = _rotate;
 
+    uint32_t x = _r->x;
+    uint32_t y = _r->y;
+
+    uint32_t u = _r->u;
+    uint32_t v = _r->v;
+
     uint32_t w = _r->w;
     uint32_t h = _r->h;
 
-    _r->l[0] = texpacker_make_atlas_rect( _r->x, _r->y + _r->v, w, h - _r->v );
-    _r->l[1] = texpacker_make_atlas_rect( _r->x + _r->u, _r->y, w - _r->u, _r->v );
-    _r->l[2] = texpacker_make_atlas_rect( _r->x, _r->y + _r->v, _r->u, h - _r->v );
-    _r->l[3] = texpacker_make_atlas_rect( _r->x + _r->u, _r->y, w - _r->u, h );
+    _r->l[0] = texpacker_make_atlas_rect( x, y + v, w, h - v );
+    _r->l[1] = texpacker_make_atlas_rect( x + u, y, w - u, v );
+    _r->l[2] = texpacker_make_atlas_rect( x, y + v, u, h - v );
+    _r->l[3] = texpacker_make_atlas_rect( x + u, y, w - u, h );
 
     return 0;
 }
@@ -452,16 +478,16 @@ typedef struct texpacker_atlas_rect_desc_t
     int8_t rotate;
 } texpacker_atlas_rect_desc_t;
 //////////////////////////////////////////////////////////////////////////
-static int texpacker_find_atlas_rects( texpacker_atlas_rect_t * _r, texpacker_texture_t * _t, texpacker_atlas_rect_desc_t * _nr, uint32_t * const _count )
+static int texpacker_find_atlas_rects( uint32_t _border, texpacker_atlas_rect_t * _r, texpacker_texture_t * _t, texpacker_atlas_rect_desc_t * _nr, uint32_t * const _count )
 {
-    uint32_t w = _t->width;
-    uint32_t h = _t->height;
+    uint32_t w = _t->width + _border * 2;
+    uint32_t h = _t->height + _border * 2;
 
     switch( _r->state & 0x0000000F )
     {
     case 0:
         {
-            if( (_r->w >= w && _r->h >= h) )
+            if( _r->w >= w && _r->h >= h )
             {
                 texpacker_atlas_rect_desc_t desc;
                 desc.r = _r;
@@ -469,7 +495,7 @@ static int texpacker_find_atlas_rects( texpacker_atlas_rect_t * _r, texpacker_te
 
                 _nr[(*_count)++] = desc;
             }
-            else if( (_r->w >= h && _r->h >= w) )
+            else if( _r->w >= h && _r->h >= w )
             {
                 texpacker_atlas_rect_desc_t desc;
                 desc.r = _r;
@@ -510,7 +536,7 @@ static int texpacker_find_atlas_rects( texpacker_atlas_rect_t * _r, texpacker_te
             {
                 texpacker_atlas_rect_t * rl = _r->l[index];
 
-                if( texpacker_find_atlas_rects( rl, _t, _nr, _count ) != 0 )
+                if( texpacker_find_atlas_rects( _border, rl, _t, _nr, _count ) != 0 )
                 {
                     return 1;
                 }
@@ -556,12 +582,17 @@ static void texpacker_get_texture_bounds_pow2( const texpacker_in_data_t * const
         max_height = t->height > max_height ? t->height : max_height;
     }
 
-    *_width = __new_pow2( max_width );
-    *_height = __new_pow2( max_height );
+    uint32_t max_width_border = max_width + _data->atlas_border * 2;
+    uint32_t max_height_border = max_height + _data->atlas_border * 2;
+
+    *_width = __new_pow2( max_width_border );
+    *_height = __new_pow2( max_height_border );
 }
 //////////////////////////////////////////////////////////////////////////
 static int texpacker_probe_atlas_rect( uint32_t _width, uint32_t _height, const texpacker_in_data_t * const _data, texpacker_atlas_rect_t ** _rect, uint32_t * const _packaged, uint32_t * const _unpackaged )
 {
+    uint32_t atlas_border = _data->atlas_border;
+
     texpacker_atlas_rect_t * rect = texpacker_make_atlas_rect( 0, 0, _width, _height );
 
     uint32_t packaged = 0;
@@ -583,7 +614,7 @@ static int texpacker_probe_atlas_rect( uint32_t _width, uint32_t _height, const 
 
         texpacker_atlas_rect_desc_t nr[2048] = {NULL};
         uint32_t nr_count = 0;
-        if( texpacker_find_atlas_rects( rect, t, nr, &nr_count ) != 0 )
+        if( texpacker_find_atlas_rects( atlas_border, rect, t, nr, &nr_count ) != 0 )
         {
             return 1;
         }
@@ -598,8 +629,11 @@ static int texpacker_probe_atlas_rect( uint32_t _width, uint32_t _height, const 
             const texpacker_atlas_rect_t * r = d->r;
             int8_t rotate = d->rotate;
 
-            uint32_t tw = rotate == 0 ? t->width : t->height;
-            uint32_t th = rotate == 0 ? t->height : t->width;
+            uint32_t w = t->width + atlas_border * 2;
+            uint32_t h = t->height + atlas_border * 2;
+
+            uint32_t tw = rotate == 0 ? w : h;
+            uint32_t th = rotate == 0 ? h : w;
 
             uint32_t dw = r->w - tw;
             uint32_t dh = r->h - th;
@@ -626,7 +660,7 @@ static int texpacker_probe_atlas_rect( uint32_t _width, uint32_t _height, const 
         texpacker_atlas_rect_t * rf = df->r;
         int8_t rotatef = df->rotate;
 
-        if( texpacker_fill_atlas_rect( rf, rotatef, t ) != 0 )
+        if( texpacker_fill_atlas_rect( atlas_border, rf, rotatef, t ) != 0 )
         {
             return 1;
         }
@@ -646,13 +680,13 @@ static int texpacker_probe_atlas_rect( uint32_t _width, uint32_t _height, const 
     return 0;
 }
 //////////////////////////////////////////////////////////////////////////
-static void texpacker_render_atlas_border( texpacker_atlas_t * _atlas, const texpacker_texture_t * _texture, uint8_t _r, uint8_t _g, uint8_t _b, uint8_t _a )
+static void texpacker_render_rect_border( texpacker_atlas_t * _atlas, uint32_t _x, uint32_t _y, uint32_t _w, uint32_t _h, uint8_t _r, uint8_t _g, uint8_t _b, uint8_t _a )
 {
-    uint32_t x = _texture->atlas_rect->x;
-    uint32_t y = _texture->atlas_rect->y;
+    uint32_t x = _x;
+    uint32_t y = _y;
 
-    uint32_t u = _texture->atlas_rect->u;
-    uint32_t v = _texture->atlas_rect->v;
+    uint32_t w = _w;
+    uint32_t h = _h;
 
     uint32_t width = _atlas->width;
 
@@ -663,24 +697,232 @@ static void texpacker_render_atlas_border( texpacker_atlas_t * _atlas, const tex
 
     uint8_t rgba[] = {_r, _g, _b, _a};
 
-    for( uint32_t index = 0; index != u; ++index )
+    for( uint32_t index = 0; index != w; ++index )
     {
         memcpy( atlas_pixels_byte + x * atlas_pixel_size + y * pitch + index * atlas_pixel_size, rgba, atlas_pixel_size );
     }
 
-    for( uint32_t index = 0; index != u; ++index )
+    for( uint32_t index = 0; index != w; ++index )
     {
-        memcpy( atlas_pixels_byte + x * atlas_pixel_size + y * pitch + index * atlas_pixel_size + (v - 1) * pitch, rgba, atlas_pixel_size );
+        memcpy( atlas_pixels_byte + x * atlas_pixel_size + y * pitch + index * atlas_pixel_size + (h - 1) * pitch, rgba, atlas_pixel_size );
     }
 
-    for( uint32_t index = 0; index != v; ++index )
+    for( uint32_t index = 0; index != h; ++index )
     {
         memcpy( atlas_pixels_byte + x * atlas_pixel_size + y * pitch + index * pitch, rgba, atlas_pixel_size );
     }
 
-    for( uint32_t index = 0; index != v; ++index )
+    for( uint32_t index = 0; index != h; ++index )
     {
-        memcpy( atlas_pixels_byte + x * atlas_pixel_size + y * pitch + index * pitch + (u - 1) * atlas_pixel_size, rgba, atlas_pixel_size );
+        memcpy( atlas_pixels_byte + x * atlas_pixel_size + y * pitch + index * pitch + (w - 1) * atlas_pixel_size, rgba, atlas_pixel_size );
+    }
+}
+//////////////////////////////////////////////////////////////////////////
+static void texpacker_render_atlas_border( uint32_t _border, texpacker_atlas_t * _atlas, const texpacker_texture_t * _texture, uint8_t _r, uint8_t _g, uint8_t _b, uint8_t _a )
+{
+    uint32_t x = _texture->atlas_rect->x + _border;
+    uint32_t y = _texture->atlas_rect->y + _border;
+
+    uint32_t w = _texture->atlas_rect->u - _border * 2;
+    uint32_t h = _texture->atlas_rect->v - _border * 2;
+
+    texpacker_render_rect_border( _atlas, x, y, w, h, _r, _g, _b, _a );
+}
+//////////////////////////////////////////////////////////////////////////
+static void texpacker_render_atlas( const texpacker_in_data_t * const _data, texpacker_atlas_t * _atlas )
+{
+    uint32_t atlas_border = _data->atlas_border;
+    
+    uint32_t atlas_width = _atlas->width;
+    uint32_t atlas_pixel_size = _atlas->channel * sizeof( uint8_t );
+    uint8_t * altas_pixels_byte = (uint8_t *)_atlas->pixels;
+
+    for( uint32_t texture_index = 0; texture_index != _data->textures_count; ++texture_index )
+    {
+        texpacker_texture_t * texture = _data->textures + texture_index;
+
+        if( texture->atlas != NULL )
+        {
+            continue;
+        }
+
+        texpacker_atlas_rect_t * atlas_rect = texture->atlas_rect;
+
+        if( atlas_rect == NULL )
+        {
+            continue;
+        }
+
+        uint32_t ax = atlas_rect->x + atlas_border;
+        uint32_t ay = atlas_rect->y + atlas_border;
+
+        uint32_t tw = texture->width;
+        uint32_t th = texture->height;
+        
+        uint8_t * texture_pixels_byte = (uint8_t *)texture->pixels;
+        uint32_t texture_pixel_size = texture->channel * sizeof( uint8_t );
+        uint32_t texture_row_size = tw * texture_pixel_size;
+
+        if( atlas_rect->rotate == 0 )
+        {
+            uint32_t u = tw;
+            uint32_t v = th;
+
+            if( atlas_pixel_size == 4 && texture_pixel_size == 4 )
+            {
+                for( uint32_t v_index = 0; v_index != v; ++v_index )
+                {
+                    memcpy( altas_pixels_byte + (ax + (ay + v_index) * atlas_width) * atlas_pixel_size, texture_pixels_byte + v_index * texture_row_size, texture_row_size );
+                }
+            }
+            else if( atlas_pixel_size == 4 && texture_pixel_size == 3 )
+            {
+                for( uint32_t u_index = 0; u_index != u; ++u_index )
+                {
+                    for( uint32_t v_index = 0; v_index != v; ++v_index )
+                    {
+                        uint32_t atlas_offset = (ax + u_index + (ay + v_index) * atlas_width) * atlas_pixel_size;
+                        uint32_t texture_offset = (u_index + v_index * tw) * texture_pixel_size;
+
+                        *(altas_pixels_byte + atlas_offset + 0) = *(texture_pixels_byte + texture_offset + 0);
+                        *(altas_pixels_byte + atlas_offset + 1) = *(texture_pixels_byte + texture_offset + 1);
+                        *(altas_pixels_byte + atlas_offset + 2) = *(texture_pixels_byte + texture_offset + 2);
+                        *(altas_pixels_byte + atlas_offset + 3) = 255;
+                    }
+                }
+            }
+        }
+        else
+        {
+            uint32_t u = th;
+            uint32_t v = tw;
+
+            if( atlas_pixel_size == 4 && texture_pixel_size == 4 )
+            {
+                for( uint32_t u_index = 0; u_index != u; ++u_index )
+                {
+                    for( uint32_t v_index = 0; v_index != v; ++v_index )
+                    {
+                        uint32_t atlas_offset = (ax + u_index + (ay + v_index) * atlas_width) * atlas_pixel_size;
+                        uint32_t texture_offset = (v_index + u_index * tw) * texture_pixel_size;
+
+                        *(altas_pixels_byte + atlas_offset + 0) = *(texture_pixels_byte + texture_offset + 0);
+                        *(altas_pixels_byte + atlas_offset + 1) = *(texture_pixels_byte + texture_offset + 1);
+                        *(altas_pixels_byte + atlas_offset + 2) = *(texture_pixels_byte + texture_offset + 2);
+                        *(altas_pixels_byte + atlas_offset + 3) = *(texture_pixels_byte + texture_offset + 3);
+                    }
+                }
+            }
+            else if( atlas_pixel_size == 4 && texture_pixel_size == 3 )
+            {
+                for( uint32_t u_index = 0; u_index != u; ++u_index )
+                {
+                    for( uint32_t v_index = 0; v_index != v; ++v_index )
+                    {
+                        uint32_t atlas_offset = (ax + u_index + (ay + v_index) * atlas_width) * atlas_pixel_size;
+                        uint32_t texture_offset = (v_index + u_index * tw) * texture_pixel_size;
+
+                        *(altas_pixels_byte + atlas_offset + 0) = *(texture_pixels_byte + texture_offset + 0);
+                        *(altas_pixels_byte + atlas_offset + 1) = *(texture_pixels_byte + texture_offset + 1);
+                        *(altas_pixels_byte + atlas_offset + 2) = *(texture_pixels_byte + texture_offset + 2);
+                        *(altas_pixels_byte + atlas_offset + 3) = 255;
+                    }
+                }
+            }
+        }
+
+        texpacker_render_atlas_border( atlas_border, _atlas, texture, 255, 0, 0, 255 );
+
+        texture->atlas = _atlas;
+    }
+
+    texpacker_render_rect_border( _atlas, 0, 0, _atlas->width, _atlas->height, 255, 0, 0, 255 );
+}
+//////////////////////////////////////////////////////////////////////////
+static void texpacker_correct_atlas_alpha_pixel( uint32_t _u, uint32_t _v, texpacker_atlas_t * _atlas, uint32_t * const _tr, uint32_t * const _tg, uint32_t * const _tb, uint32_t * const _count )
+{
+    uint32_t atlas_width = _atlas->width;
+    uint32_t atlas_height = _atlas->height;
+
+    if( _u >= atlas_width || _v >= atlas_height )
+    {
+        return;
+    }
+
+    uint32_t atlas_pixel_size = _atlas->channel * sizeof( uint8_t );
+    uint8_t * altas_pixels_byte = (uint8_t *)_atlas->pixels;
+
+    uint32_t atlas_pixel_offset = (_u + _v * atlas_width) * atlas_pixel_size;
+
+    uint32_t atlas_pixel_probe_a = *(altas_pixels_byte + atlas_pixel_offset + 3);
+
+    if( atlas_pixel_probe_a == 0 )
+    {
+        return;
+    }
+
+    uint32_t atlas_pixel_probe_r = *(altas_pixels_byte + atlas_pixel_offset + 0);
+    uint32_t atlas_pixel_probe_g = *(altas_pixels_byte + atlas_pixel_offset + 1);
+    uint32_t atlas_pixel_probe_b = *(altas_pixels_byte + atlas_pixel_offset + 2);
+
+    *_tr += atlas_pixel_probe_r;
+    *_tg += atlas_pixel_probe_g;
+    *_tb += atlas_pixel_probe_b;
+
+    *_count += 1;
+}
+//////////////////////////////////////////////////////////////////////////
+static void texpacker_correct_atlas_alpha_pixels( texpacker_atlas_t * _atlas )
+{
+    uint32_t atlas_width = _atlas->width;
+    uint32_t atlas_height = _atlas->height;
+    uint32_t atlas_pixel_size = _atlas->channel * sizeof( uint8_t );
+    uint8_t * altas_pixels_byte = (uint8_t *)_atlas->pixels;
+
+    if( atlas_pixel_size == 4 )
+    {
+        for( uint32_t u = 0; u != atlas_width; ++u )
+        {
+            for( uint32_t v = 0; v != atlas_height; ++v )
+            {
+                uint32_t atlas_offset = (u + v * atlas_width) * atlas_pixel_size;
+
+                uint32_t atlas_pixel_a = *(altas_pixels_byte + atlas_offset + 3);
+
+                if( atlas_pixel_a != 0 )
+                {
+                    continue;
+                }
+
+                uint32_t tr = 0;
+                uint32_t tg = 0;
+                uint32_t tb = 0;
+
+                uint32_t count = 0;
+
+                texpacker_correct_atlas_alpha_pixel( u - 1, v - 1, _atlas, &tr, &tg, &tb, &count );
+                texpacker_correct_atlas_alpha_pixel( u - 1, v + 0, _atlas, &tr, &tg, &tb, &count );
+                texpacker_correct_atlas_alpha_pixel( u - 1, v + 1, _atlas, &tr, &tg, &tb, &count );
+                texpacker_correct_atlas_alpha_pixel( u + 0, v - 1, _atlas, &tr, &tg, &tb, &count );
+                texpacker_correct_atlas_alpha_pixel( u + 0, v + 1, _atlas, &tr, &tg, &tb, &count );
+                texpacker_correct_atlas_alpha_pixel( u + 1, v - 1, _atlas, &tr, &tg, &tb, &count );
+                texpacker_correct_atlas_alpha_pixel( u + 1, v + 0, _atlas, &tr, &tg, &tb, &count );
+                texpacker_correct_atlas_alpha_pixel( u + 1, v + 1, _atlas, &tr, &tg, &tb, &count );
+
+                if( count == 0 )
+                { 
+                    continue;
+                }
+
+                uint32_t r = tr / count;
+                uint32_t g = tg / count;
+                uint32_t b = tb / count;
+
+                *(altas_pixels_byte + atlas_offset + 0) = (uint8_t)r;
+                *(altas_pixels_byte + atlas_offset + 1) = (uint8_t)g;
+                *(altas_pixels_byte + atlas_offset + 2) = (uint8_t)b;
+            }
+        }
     }
 }
 //////////////////////////////////////////////////////////////////////////
@@ -746,113 +988,18 @@ static int texpacker_make_atlas( const texpacker_in_data_t * const _data, texpac
     atlas->height = r0->h;
     atlas->channel = _data->atlas_channels;
 
-    size_t atlas_pixels_size = atlas->width * atlas->height * atlas->channel;
-    void * atlas_pixels = malloc( atlas->width * atlas->height * atlas->channel );
+    uint32_t atlas_width = atlas->width;
+    uint32_t atlas_height = atlas->height;
+    uint32_t atlas_channel = atlas->channel;
 
+    size_t atlas_pixels_size = atlas_width * atlas_height * atlas_channel * sizeof( uint8_t );
+    void * atlas_pixels = malloc( atlas_pixels_size );
     memset( atlas_pixels, 0x00, atlas_pixels_size );
 
     atlas->pixels = atlas_pixels;
 
-    uint8_t * altas_pixels_byte = (uint8_t *)atlas->pixels;
-    uint32_t atlas_pixel_size = atlas->channel;
-
-    for( uint32_t texture_index = 0; texture_index != _data->textures_count; ++texture_index )
-    {
-        texpacker_texture_t * texture = _data->textures + texture_index;
-
-        if( texture->atlas != NULL )
-        {
-            continue;
-        }
-
-        texpacker_atlas_rect_t * atlas_rect = texture->atlas_rect;
-
-        if( atlas_rect == NULL )
-        {
-            continue;
-        }
-
-        uint32_t bx = atlas_rect->x;
-        uint32_t by = atlas_rect->y;
-
-        uint8_t * texture_pixels_byte = (uint8_t *)texture->pixels;
-        uint32_t texture_pixel_size = sizeof( uint8_t ) * texture->channel;
-        uint32_t texture_row_size = texture->width * texture_pixel_size;
-
-        if( atlas_rect->rotate == 0 )
-        {
-            uint32_t u = atlas_rect->u;
-            uint32_t v = atlas_rect->v;
-
-            if( atlas_pixel_size == 4 && texture_pixel_size == 4 )
-            {
-                for( uint32_t v_index = 0; v_index != v; ++v_index )
-                {
-                    memcpy( altas_pixels_byte + (bx + (by + v_index) * atlas->width) * atlas_pixel_size, texture_pixels_byte + v_index * texture_row_size, texture_row_size );
-                }
-            }
-            else if( atlas_pixel_size == 4 && texture_pixel_size == 3 )
-            {
-                for( uint32_t u_index = 0; u_index != u; ++u_index )
-                {
-                    for( uint32_t v_index = 0; v_index != v; ++v_index )
-                    {
-                        uint32_t atlas_offset = (bx + u_index + (by + v_index) * atlas->width) * atlas_pixel_size;
-                        uint32_t texture_offset = (u_index + v_index * texture->width) * texture_pixel_size;
-
-                        *(altas_pixels_byte + atlas_offset + 0) = *(texture_pixels_byte + texture_offset + 0);
-                        *(altas_pixels_byte + atlas_offset + 1) = *(texture_pixels_byte + texture_offset + 1);
-                        *(altas_pixels_byte + atlas_offset + 2) = *(texture_pixels_byte + texture_offset + 2);
-                        *(altas_pixels_byte + atlas_offset + 3) = 255;
-                    }
-                }
-            }
-
-            texpacker_render_atlas_border( atlas, texture, 255, 0, 0, 255 );
-        }
-        else
-        {
-            uint32_t u = atlas_rect->u;
-            uint32_t v = atlas_rect->v;
-
-            if( atlas_pixel_size == 4 && texture_pixel_size == 4 )
-            {
-                for( uint32_t u_index = 0; u_index != u; ++u_index )
-                {
-                    for( uint32_t v_index = 0; v_index != v; ++v_index )
-                    {
-                        uint32_t atlas_offset = (bx + u_index + (by + v_index) * atlas->width) * atlas_pixel_size;
-                        uint32_t texture_offset = (v_index + u_index * texture->width) * texture_pixel_size;
-
-                        *(altas_pixels_byte + atlas_offset + 0) = *(texture_pixels_byte + texture_offset + 0);
-                        *(altas_pixels_byte + atlas_offset + 1) = *(texture_pixels_byte + texture_offset + 1);
-                        *(altas_pixels_byte + atlas_offset + 2) = *(texture_pixels_byte + texture_offset + 2);
-                        *(altas_pixels_byte + atlas_offset + 3) = *(texture_pixels_byte + texture_offset + 3);
-                    }
-                }
-            }
-            else if( atlas_pixel_size == 4 && texture_pixel_size == 3 )
-            {
-                for( uint32_t u_index = 0; u_index != u; ++u_index )
-                {
-                    for( uint32_t v_index = 0; v_index != v; ++v_index )
-                    {
-                        uint32_t atlas_offset = (bx + u_index + (by + v_index) * atlas->width) * atlas_pixel_size;
-                        uint32_t texture_offset = (v_index + u_index * texture->width) * texture_pixel_size;
-
-                        *(altas_pixels_byte + atlas_offset + 0) = *(texture_pixels_byte + texture_offset + 0);
-                        *(altas_pixels_byte + atlas_offset + 1) = *(texture_pixels_byte + texture_offset + 1);
-                        *(altas_pixels_byte + atlas_offset + 2) = *(texture_pixels_byte + texture_offset + 2);
-                        *(altas_pixels_byte + atlas_offset + 3) = 255;
-                    }
-                }
-            }
-
-            texpacker_render_atlas_border( atlas, texture, 0, 255, 0, 255 );
-        }
-
-        texture->atlas = atlas;
-    }
+    texpacker_render_atlas( _data, atlas );
+    texpacker_correct_atlas_alpha_pixels( atlas );
 
     *_atlas = atlas;
     *_packaged = packaged;
@@ -945,13 +1092,15 @@ static int texpacker_save_atlas_info( texpacker_in_data_t * const _data, texpack
         json_object_set_new( j_texture, "path", json_string( mbstr_texture_path ) );
         json_object_set_new( j_texture, "atlas", json_integer( texture->atlas->index ) );
 
+        uint32_t atlas_border = _data->atlas_border;
+
         float atlas_width_inv = 1.f / (float)texture->atlas->width;
         float atlas_height_inv = 1.f / (float)texture->atlas->height;
 
-        float uv_x = (float)texture->atlas_rect->x * atlas_width_inv;
-        float uv_y = (float)texture->atlas_rect->y * atlas_height_inv;
-        float uv_u = (float)texture->atlas_rect->u * atlas_width_inv;
-        float uv_v = (float)texture->atlas_rect->v * atlas_height_inv;
+        float uv_x = (float)(texture->atlas_rect->x + atlas_border) * atlas_width_inv;
+        float uv_y = (float)(texture->atlas_rect->y + atlas_border) * atlas_height_inv;
+        float uv_u = (float)(texture->atlas_rect->u - atlas_border) * atlas_width_inv;
+        float uv_v = (float)(texture->atlas_rect->v - atlas_border) * atlas_height_inv;
 
         json_object_set_new( j_texture, "x", json_real( uv_x ) );
         json_object_set_new( j_texture, "y", json_real( uv_y ) );
@@ -1042,6 +1191,8 @@ int wmain( int argc, wchar_t * argv[] )
         {
             return EXIT_FAILURE;
         }
+
+        //if( texpacker_correct_pixels_atlas( atlas, index ) != 0 )
 
         if( texpacker_save_atlas( &in_data, atlas, index ) != 0 )
         {
